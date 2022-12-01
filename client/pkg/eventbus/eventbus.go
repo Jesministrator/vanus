@@ -484,6 +484,28 @@ func (w *busWriter) AppendOne(ctx context.Context, event *ce.Event, opts ...api.
 	return encoded, nil
 }
 
+func (w *busWriter) AppendOneStream(ctx context.Context, event *ce.Event, cb api.Callback, opts ...api.WriteOption) error {
+	_ctx, span := w.tracer.Start(ctx, "AppendOneStream")
+	defer span.End()
+
+	var writeOpts *api.WriteOptions = w.opts
+	if len(opts) > 0 {
+		writeOpts = w.opts.Copy()
+		for _, opt := range opts {
+			opt(writeOpts)
+		}
+	}
+
+	// 1. pick a writer of eventlog
+	lw, err := w.pickWritableLog(_ctx, writeOpts)
+	if err != nil {
+		return err
+	}
+
+	// 2. append the event to the eventlog
+	return lw.AppendStream(_ctx, event, cb)
+}
+
 func (w *busWriter) AppendMany(ctx context.Context, events []*ce.Event, opts ...api.WriteOption) (eid string, err error) {
 	// TODO(jiangkai): implement this method, by jiangkai, 2022.10.24
 	return "", nil

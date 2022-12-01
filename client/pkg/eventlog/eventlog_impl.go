@@ -31,6 +31,7 @@ import (
 
 	// this project.
 	el "github.com/linkall-labs/vanus/client/internal/vanus/eventlog"
+	"github.com/linkall-labs/vanus/client/pkg/api"
 	"github.com/linkall-labs/vanus/client/pkg/errors"
 	"github.com/linkall-labs/vanus/client/pkg/record"
 	vlog "github.com/linkall-labs/vanus/observability/log"
@@ -385,6 +386,16 @@ func (w *logWriter) doAppend(ctx context.Context, event *ce.Event) (int64, error
 		return -1, err
 	}
 	return offset, nil
+}
+
+func (w *logWriter) AppendStream(ctx context.Context, event *ce.Event, cb api.Callback) error {
+	// TODO: async for throughput
+
+	segment, err := w.selectWritableSegment(ctx)
+	if err != nil {
+		return err
+	}
+	return segment.AppendStream(ctx, event, cb)
 }
 
 func (w *logWriter) selectWritableSegment(ctx context.Context) (*segment, error) {

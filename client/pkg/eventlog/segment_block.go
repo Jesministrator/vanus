@@ -23,6 +23,7 @@ import (
 
 	// this project
 	"github.com/linkall-labs/vanus/client/internal/vanus/store"
+	"github.com/linkall-labs/vanus/client/pkg/api"
 	"github.com/linkall-labs/vanus/client/pkg/errors"
 	"github.com/linkall-labs/vanus/client/pkg/record"
 )
@@ -54,6 +55,10 @@ func (s *block) LookupOffset(ctx context.Context, t time.Time) (int64, error) {
 
 func (s *block) Append(ctx context.Context, event *ce.Event) (int64, error) {
 	return s.store.Append(ctx, s.id, event)
+}
+
+func (s *block) AppendStream(ctx context.Context, event *ce.Event, cb api.Callback) error {
+	return s.store.AppendStream(ctx, s.id, event, cb)
 }
 
 func (s *block) Read(ctx context.Context, offset int64, size int16, pollingTimeout uint32) ([]*ce.Event, error) {

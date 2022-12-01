@@ -17,12 +17,14 @@ package segment
 import (
 	// standard libraries.
 	"context"
+	"time"
 
 	// third-party libraries.
 	cepb "cloudevents.io/genproto/v1"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	// first-party libraries.
+
 	segpb "github.com/linkall-labs/vanus/proto/pkg/segment"
 
 	// this project.
@@ -116,14 +118,54 @@ func (s *segmentServer) InactivateSegment(
 func (s *segmentServer) AppendToBlock(
 	ctx context.Context, req *segpb.AppendToBlockRequest,
 ) (*segpb.AppendToBlockResponse, error) {
-	blockID := vanus.NewIDFromUint64(req.BlockId)
-	events := req.Events.GetEvents()
-	offs, err := s.srv.AppendToBlock(ctx, blockID, events)
-	if err != nil {
-		return nil, err
-	}
+	time.Sleep(2 * time.Millisecond)
+	offsets := make([]int64, 1)
+	offsets[0] = 999
+	return &segpb.AppendToBlockResponse{Offsets: offsets}, nil
+	// blockID := vanus.NewIDFromUint64(req.BlockId)
+	// events := req.Events.GetEvents()
+	// offs, err := s.srv.AppendToBlock(ctx, blockID, events)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	return &segpb.AppendToBlockResponse{Offsets: offs}, nil
+	// return &segpb.AppendToBlockResponse{Offsets: offs}, nil
+}
+
+func (s *segmentServer) AppendToBlockStream(stream segpb.SegmentServer_AppendToBlockStreamServer) error {
+	errc := make(chan error, 1)
+	go func() {
+		for {
+			_, err := stream.Recv()
+			if err != nil {
+				errc <- err
+				return
+			}
+			// offsets, err := s.srv.AppendToBlock(context.Background(), vanus.ID(request.BlockId), request.Events.Events)
+			// if err != nil {
+			// 	errc <- err
+			// 	return
+			// }
+			time.Sleep(2 * time.Millisecond)
+			offsets := make([]int64, 1)
+			offsets[0] = 999
+			err = stream.Send(&segpb.AppendToBlockResponse{
+				Offsets: offsets,
+			})
+			if err != nil {
+				errc <- err
+				return
+			}
+		}
+	}()
+
+	var err error
+	select {
+	case err = <-errc:
+	case <-stream.Context().Done():
+		err = stream.Context().Err()
+	}
+	return err
 }
 
 func (s *segmentServer) ReadFromBlock(
@@ -138,6 +180,39 @@ func (s *segmentServer) ReadFromBlock(
 	return &segpb.ReadFromBlockResponse{
 		Events: &cepb.CloudEventBatch{Events: events},
 	}, nil
+}
+
+func (s *segmentServer) ReadFromBlockStream(stream segpb.SegmentServer_ReadFromBlockStreamServer) error {
+	errc := make(chan error, 1)
+	go func() {
+		for {
+			request, err := stream.Recv()
+			if err != nil {
+				errc <- err
+				return
+			}
+			events, err := s.srv.ReadFromBlock(context.Background(), vanus.ID(request.BlockId), request.Offset, int(request.Number), request.PollingTimeout)
+			if err != nil {
+				errc <- err
+				return
+			}
+			err = stream.Send(&segpb.ReadFromBlockResponse{
+				Events: &cepb.CloudEventBatch{Events: events},
+			})
+			if err != nil {
+				errc <- err
+				return
+			}
+		}
+	}()
+
+	var err error
+	select {
+	case err = <-errc:
+	case <-stream.Context().Done():
+		err = stream.Context().Err()
+	}
+	return err
 }
 
 func (s *segmentServer) LookupOffsetInBlock(

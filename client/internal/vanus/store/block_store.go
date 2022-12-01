@@ -17,7 +17,10 @@ package store
 import (
 	// standard libraries
 	"context"
+	"fmt"
+	"math/rand"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/linkall-labs/vanus/observability/tracing"
@@ -38,11 +41,13 @@ import (
 	"github.com/linkall-labs/vanus/client/internal/vanus/codec"
 	"github.com/linkall-labs/vanus/client/internal/vanus/net/rpc"
 	"github.com/linkall-labs/vanus/client/internal/vanus/net/rpc/bare"
+	"github.com/linkall-labs/vanus/client/pkg/api"
 	"github.com/linkall-labs/vanus/client/pkg/errors"
 	"github.com/linkall-labs/vanus/client/pkg/primitive"
 )
 
 func newBlockStore(endpoint string) (*BlockStore, error) {
+	var err error
 	s := &BlockStore{
 		RefCount: primitive.RefCount{},
 		client: bare.New(endpoint, rpc.NewClientFunc(func(conn *grpc.ClientConn) interface{} {
@@ -50,19 +55,36 @@ func newBlockStore(endpoint string) (*BlockStore, error) {
 		})),
 		tracer: tracing.NewTracer("internal.store.BlockStore", trace.SpanKindClient),
 	}
-	_, err := s.client.Get(context.Background())
+	s.appendStream, err = s.connect(context.Background())
 	if err != nil {
 		// TODO: check error
 		return nil, err
 	}
+	// go s.receive(context.Background())
 	return s, nil
 }
 
 type BlockStore struct {
 	primitive.RefCount
-	client rpc.Client
-	tracer *tracing.Tracer
+	client       rpc.Client
+	tracer       *tracing.Tracer
+	appendStream segpb.SegmentServer_AppendToBlockStreamClient
+	mu           sync.Mutex
+	// m            sync.Map
 }
+
+// func (s *BlockStore) receive(ctx context.Context) {
+// 	for {
+// 		res, err := s.appendStream.Recv()
+// 		if err != nil {
+// 			continue
+// 		}
+// 		c, _ := s.m.LoadAndDelete(res.ResponseId)
+// 		if c != nil {
+// 			c.(api.Callback)(res)
+// 		}
+// 	}
+// }
 
 func (s *BlockStore) Endpoint() string {
 	return s.client.Endpoint()
@@ -92,6 +114,7 @@ func (s *BlockStore) Append(ctx context.Context, block uint64, event *ce.Event) 
 		return -1, err
 	}
 
+	now := time.Now()
 	res, err := client.(segpb.SegmentServerClient).AppendToBlock(_ctx, req)
 	if err != nil {
 		sts := status.Convert(err)
@@ -101,9 +124,163 @@ func (s *BlockStore) Append(ctx context.Context, block uint64, event *ce.Event) 
 		}
 		return -1, errors.ErrNotWritable
 	}
+	fmt.Printf("time spent append unary, time: %+v, offsets: %d\n", time.Since(now).Microseconds(), res.Offsets[0])
 	// TODO(Y. F. Zhang): batch events
 	return res.GetOffsets()[0], nil
 }
+
+func (s *BlockStore) connect(ctx context.Context) (segpb.SegmentServer_AppendToBlockStreamClient, error) {
+	if s.appendStream != nil {
+		return s.appendStream, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.appendStream != nil { //double check
+		return s.appendStream, nil
+	}
+
+	client, err := s.client.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	stream, err := client.(segpb.SegmentServerClient).AppendToBlockStream(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return stream, nil
+}
+
+func (s *BlockStore) AppendStream(ctx context.Context, block uint64, event *ce.Event, cb api.Callback) error {
+	_ctx, span := s.tracer.Start(ctx, "Append")
+	defer span.End()
+
+	var (
+		err error
+	)
+
+	if s.appendStream == nil {
+		s.appendStream, err = s.connect(_ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	// generate unique RequestId
+	requestID := rand.Uint64()
+	// s.m.Store(requestID, cb)
+
+	// cleanFunc := func(err error) {
+	// 	s.m.Delete(requestID)
+	// 	c, _ := s.m.LoadAndDelete(requestID)
+	// 	if c != nil {
+	// 		c.(Callback)(&segpb.AppendToBlockResponse{
+	// 			Error: &errpb.StreamError{
+	// 				Internal: &errpb.Internal{
+	// 					Reason: err.Error(),
+	// 				},
+	// 			},
+	// 		})
+	// 	}
+	// }
+	eventpb, err := codec.ToProto(event)
+	if err != nil {
+		return err
+	}
+	req := &segpb.AppendToBlockRequest{
+		RequestId: requestID,
+		BlockId:   block,
+		Events: &cepb.CloudEventBatch{
+			Events: []*cepb.CloudEvent{eventpb},
+		},
+	}
+	now := time.Now()
+	if err = s.appendStream.Send(req); err != nil {
+		s.appendStream.CloseSend()
+		s.appendStream = nil
+		return err
+	}
+	resp, err := s.appendStream.Recv()
+	if err != nil {
+		s.appendStream.CloseSend()
+		s.appendStream = nil
+		return err
+	}
+	fmt.Printf("time spent append stream, time: %+v, offsets: %d\n", time.Since(now).Microseconds(), resp.Offsets[0])
+
+	return nil
+
+	// s.m.Store(requestID, callback(func(res *segpb.AppendToBlockResponse) {
+	// 	resp = res
+	// 	wg.Done()
+	// }))
+
+	// go func() {
+	// 	s.send(ctx, block, event, requestID)
+	// }()
+
+	// if resp.Error.Internal != nil {
+	// 	log.Warning(ctx, "block append failed cause internal error", map[string]interface{}{
+	// 		"reason": resp.Error.SegmentFull.Reason,
+	// 	})
+	// 	return -1, errors.ErrUnknown
+	// }
+
+	// if resp.Error.SegmentFull != nil {
+	// 	log.Warning(ctx, "block append failed cause the segment is full", map[string]interface{}{
+	// 		"reason": resp.Error.SegmentFull.Reason,
+	// 	})
+	// 	return -1, errors.ErrNoSpace
+	// }
+
+	// return resp.Append.Offsets[0], nil
+}
+
+// func (s *BlockStore) send(ctx context.Context, block uint64, event *ce.Event, requestID uint64) {
+// 	cleanFunc := func(err error) {
+// 		s.m.Delete(requestID)
+// 		c, _ := s.m.LoadAndDelete(requestID)
+// 		if c != nil {
+// 			c.(callback)(&segpb.Response{
+// 				Error: &errpb.StreamError{
+// 					Internal: &errpb.Internal{
+// 						Reason: err.Error(),
+// 					},
+// 				},
+// 			})
+// 		}
+// 	}
+// 	eventpb, err := codec.ToProto(event)
+// 	if err != nil {
+// 		cleanFunc(err)
+// 	}
+// 	req := &segpb.Request{
+// 		RequestId:   requestID,
+// 		RequestCode: segpb.RequestCode_RequestCodeAppendToBlock,
+// 		Append: &segpb.AppendToBlockRequest{
+// 			BlockId: block,
+// 			Events: &cepb.CloudEventBatch{
+// 				Events: []*cepb.CloudEvent{eventpb},
+// 			},
+// 		},
+// 	}
+// 	if err = s.stream.Send(req); err != nil {
+// 		s.stream.CloseSend()
+// 		s.stream = nil
+// 		s.stream, err = s.connect(ctx)
+// 		if err != nil {
+// 			cleanFunc(err)
+// 		}
+// 		if err = s.stream.Send(req); err != nil {
+// 			log.Warning(ctx, "===client=== stream double send failed", map[string]interface{}{
+// 				log.KeyError: err,
+// 			})
+// 			cleanFunc(err)
+// 		}
+// 	}
+// }
 
 func (s *BlockStore) Read(
 	ctx context.Context, block uint64, offset int64, size int16, pollingTimeout uint32,

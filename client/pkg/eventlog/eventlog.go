@@ -50,6 +50,8 @@ type LogWriter interface {
 	Close(ctx context.Context)
 
 	Append(ctx context.Context, event *ce.Event) (off int64, err error)
+
+	AppendStream(ctx context.Context, event *ce.Event, cb api.Callback) error
 }
 
 type LogReader interface {

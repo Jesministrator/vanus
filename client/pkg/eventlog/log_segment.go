@@ -33,7 +33,7 @@ import (
 	segpb "github.com/linkall-labs/vanus/proto/pkg/segment"
 
 	// this project.
-
+	"github.com/linkall-labs/vanus/client/pkg/api"
 	"github.com/linkall-labs/vanus/client/pkg/errors"
 	"github.com/linkall-labs/vanus/client/pkg/record"
 )
@@ -169,6 +169,17 @@ func (s *segment) Append(ctx context.Context, event *ce.Event) (int64, error) {
 		return -1, err
 	}
 	return off + s.startOffset, nil
+}
+
+func (s *segment) AppendStream(ctx context.Context, event *ce.Event, cb api.Callback) error {
+	_ctx, span := s.tracer.Start(ctx, "Append")
+	defer span.End()
+
+	b := s.preferSegmentBlock()
+	if b == nil {
+		return errors.ErrNoLeader
+	}
+	return b.AppendStream(_ctx, event, cb)
 }
 
 func (s *segment) Read(ctx context.Context, from int64, size int16, pollingTimeout uint32) ([]*ce.Event, error) {

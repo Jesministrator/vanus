@@ -21,6 +21,8 @@ import (
 	ce "github.com/cloudevents/sdk-go/v2"
 )
 
+type Callback func(error)
+
 type Eventbus interface {
 	Writer(opts ...WriteOption) BusWriter
 	Reader(opts ...ReadOption) BusReader
@@ -33,6 +35,7 @@ type Eventbus interface {
 type BusWriter interface {
 	AppendOne(ctx context.Context, event *ce.Event, opts ...WriteOption) (eid string, err error)
 	AppendMany(ctx context.Context, events []*ce.Event, opts ...WriteOption) (eid string, err error)
+	AppendOneStream(ctx context.Context, event *ce.Event, cb Callback, opts ...WriteOption) error
 }
 
 type BusReader interface {
