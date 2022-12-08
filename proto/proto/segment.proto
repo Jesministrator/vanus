@@ -18,6 +18,7 @@ package linkall.vanus.segment;
 
 import "cloudevents/cloudevents.proto";
 import "config.proto";
+import "errors.proto";
 import "google/protobuf/empty.proto";
 
 option go_package = "github.com/linkall-labs/vanus/proto/pkg/segment";
@@ -38,6 +39,8 @@ service SegmentServer {
   rpc LookupOffsetInBlock(LookupOffsetInBlockRequest) returns (LookupOffsetInBlockResponse);
 
   rpc Status(google.protobuf.Empty) returns (StatusResponse);
+
+  rpc Handler(stream Request) returns (stream Response);
 }
 
 message StartSegmentServerRequest {
@@ -112,4 +115,30 @@ message LookupOffsetInBlockResponse {
 
 message StatusResponse {
   string status = 1;
+}
+
+enum RequestCode {
+  RequestCodeReadFromBlock = 0;
+  RequestCodeAppendToBlock = 1;
+}
+
+message Request {
+  uint64 request_id = 1;
+  RequestCode request_code = 2;
+  ReadFromBlockRequest read = 3;
+  AppendToBlockRequest append = 4;
+}
+
+enum ResponseCode {
+  ResponseCodeReadFromBlock = 0;
+  ResponseCodeAppendToBlock = 1;
+}
+
+message Response {
+  linkall.vanus.errors.StreamError error = 1;
+
+  uint64 response_id = 2;
+  ResponseCode response_code = 3;
+  ReadFromBlockResponse read = 4;
+  AppendToBlockResponse append = 5;
 }

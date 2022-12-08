@@ -34,6 +34,7 @@ type SegmentServerClient interface {
 	ReadFromBlock(ctx context.Context, in *ReadFromBlockRequest, opts ...grpc.CallOption) (*ReadFromBlockResponse, error)
 	LookupOffsetInBlock(ctx context.Context, in *LookupOffsetInBlockRequest, opts ...grpc.CallOption) (*LookupOffsetInBlockResponse, error)
 	Status(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*StatusResponse, error)
+	Handler(ctx context.Context, opts ...grpc.CallOption) (SegmentServer_HandlerClient, error)
 }
 
 type segmentServerClient struct {
@@ -143,6 +144,37 @@ func (c *segmentServerClient) Status(ctx context.Context, in *emptypb.Empty, opt
 	return out, nil
 }
 
+func (c *segmentServerClient) Handler(ctx context.Context, opts ...grpc.CallOption) (SegmentServer_HandlerClient, error) {
+	stream, err := c.cc.NewStream(ctx, &SegmentServer_ServiceDesc.Streams[0], "/linkall.vanus.segment.SegmentServer/Handler", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &segmentServerHandlerClient{stream}
+	return x, nil
+}
+
+type SegmentServer_HandlerClient interface {
+	Send(*Request) error
+	Recv() (*Response, error)
+	grpc.ClientStream
+}
+
+type segmentServerHandlerClient struct {
+	grpc.ClientStream
+}
+
+func (x *segmentServerHandlerClient) Send(m *Request) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *segmentServerHandlerClient) Recv() (*Response, error) {
+	m := new(Response)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // SegmentServerServer is the server API for SegmentServer service.
 // All implementations should embed UnimplementedSegmentServerServer
 // for forward compatibility
@@ -158,6 +190,7 @@ type SegmentServerServer interface {
 	ReadFromBlock(context.Context, *ReadFromBlockRequest) (*ReadFromBlockResponse, error)
 	LookupOffsetInBlock(context.Context, *LookupOffsetInBlockRequest) (*LookupOffsetInBlockResponse, error)
 	Status(context.Context, *emptypb.Empty) (*StatusResponse, error)
+	Handler(SegmentServer_HandlerServer) error
 }
 
 // UnimplementedSegmentServerServer should be embedded to have forward compatible implementations.
@@ -196,6 +229,9 @@ func (UnimplementedSegmentServerServer) LookupOffsetInBlock(context.Context, *Lo
 }
 func (UnimplementedSegmentServerServer) Status(context.Context, *emptypb.Empty) (*StatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedSegmentServerServer) Handler(SegmentServer_HandlerServer) error {
+	return status.Errorf(codes.Unimplemented, "method Handler not implemented")
 }
 
 // UnsafeSegmentServerServer may be embedded to opt out of forward compatibility for this service.
@@ -407,6 +443,32 @@ func _SegmentServer_Status_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SegmentServer_Handler_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SegmentServerServer).Handler(&segmentServerHandlerServer{stream})
+}
+
+type SegmentServer_HandlerServer interface {
+	Send(*Response) error
+	Recv() (*Request, error)
+	grpc.ServerStream
+}
+
+type segmentServerHandlerServer struct {
+	grpc.ServerStream
+}
+
+func (x *segmentServerHandlerServer) Send(m *Response) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *segmentServerHandlerServer) Recv() (*Request, error) {
+	m := new(Request)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // SegmentServer_ServiceDesc is the grpc.ServiceDesc for SegmentServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -459,6 +521,13 @@ var SegmentServer_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SegmentServer_Status_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Handler",
+			Handler:       _SegmentServer_Handler_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "segment.proto",
 }

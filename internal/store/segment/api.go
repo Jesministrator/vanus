@@ -23,10 +23,13 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	// first-party libraries.
+	errpb "github.com/linkall-labs/vanus/proto/pkg/errors"
 	segpb "github.com/linkall-labs/vanus/proto/pkg/segment"
 
 	// this project.
 	"github.com/linkall-labs/vanus/internal/primitive/vanus"
+	"github.com/linkall-labs/vanus/internal/store/errors"
+	"github.com/linkall-labs/vanus/observability/log"
 )
 
 type segmentServer struct {
@@ -150,4 +153,53 @@ func (s *segmentServer) LookupOffsetInBlock(
 	}
 
 	return &segpb.LookupOffsetInBlockResponse{Offset: off}, nil
+}
+
+func (s *segmentServer) Handler(stream segpb.SegmentServer_HandlerServer) error {
+	for {
+		request, err := stream.Recv()
+		if err != nil {
+			log.Error(context.Background(), "===server=== stream receive failed", map[string]interface{}{
+				log.KeyError: err,
+			})
+			return err
+		}
+		go func() {
+			s.handler(stream, request)
+		}()
+	}
+}
+
+func (s *segmentServer) handler(stream segpb.SegmentServer_HandlerServer, request *segpb.Request) {
+	switch request.RequestCode {
+	case segpb.RequestCode_RequestCodeReadFromBlock:
+		events, _ := s.srv.ReadFromBlock(context.Background(), vanus.ID(request.Read.BlockId), request.Read.Offset, int(request.Read.Number), request.Read.PollingTimeout)
+		stream.Send(&segpb.Response{
+			Error:        &errpb.StreamError{},
+			ResponseId:   request.RequestId,
+			ResponseCode: segpb.ResponseCode_ResponseCodeReadFromBlock,
+			Read: &segpb.ReadFromBlockResponse{
+				Events: &cepb.CloudEventBatch{Events: events},
+			},
+		})
+	case segpb.RequestCode_RequestCodeAppendToBlock:
+		streamErr := &errpb.StreamError{}
+		offsets, err := s.srv.AppendToBlock(context.Background(), vanus.ID(request.Append.BlockId), request.Append.Events.Events)
+		if err == errors.ErrSegmentFull {
+			streamErr.SegmentFull = &errpb.SegmentFull{
+				Reason: err.Error(),
+			}
+		}
+		err = stream.Send(&segpb.Response{
+			Error:        streamErr,
+			ResponseId:   request.RequestId,
+			ResponseCode: segpb.ResponseCode_ResponseCodeAppendToBlock,
+			Append: &segpb.AppendToBlockResponse{
+				Offsets: offsets,
+			},
+		})
+		log.Error(context.Background(), "===server=== stream send finish", map[string]interface{}{
+			log.KeyError: err,
+		})
+	}
 }

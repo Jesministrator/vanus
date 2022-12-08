@@ -36,3 +36,56 @@ message Error {
   string message = 1;
   ErrorCode code = 2;
 }
+
+message Internal {
+    string reason = 1;
+}
+
+message InvalidRequest {
+    string reason = 1;
+}
+
+message ResourceNotFound {
+    string reason = 1;
+}
+
+message NotLeader {
+    string reason = 1;
+}
+
+message ServiceNotRunning {
+    string reason = 1;
+}
+
+message SegmentFull {
+    string reason = 1;
+}
+
+message ResourceExist {
+    string reason = 1;
+}
+
+message ResourceReleased {
+    string reason = 1;
+}
+
+message ResourceCanNotOp {
+    string reason = 1;
+}
+
+// Error wraps all errors, indicates an error encountered by a request.
+message StreamError {
+    reserved "stale_epoch";
+
+    // The error message
+    string message = 1;
+    Internal internal = 2;
+    InvalidRequest invalid_request = 3;
+    ResourceNotFound resource_not_found = 4;
+    NotLeader not_leader = 5;
+    ServiceNotRunning service_not_running = 6;
+    SegmentFull segment_full = 7;
+    ResourceExist resource_exist = 8;
+    ResourceReleased resource_released = 9;
+    ResourceCanNotOp resource_can_not_op = 10;
+}
