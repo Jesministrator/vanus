@@ -241,7 +241,10 @@ func (s *stream) onFlushed(base int64, off int, cbs []io.WriteCallback) {
 				return
 			}
 
-			v, _ = s.pending.LoadAndDelete(base)
+			v, loaded = s.pending.LoadAndDelete(base)
+			if !loaded {
+				continue
+			}
 			ft, _ := v.(*flushTask)
 
 			// FIXME(james.yin): pass n
